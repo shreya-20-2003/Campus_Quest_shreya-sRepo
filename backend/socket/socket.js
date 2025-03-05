@@ -1,43 +1,71 @@
 import express from "express";
-import http from 'http';
+import http from "http";
 import { Server } from "socket.io";
 
 const app = express();
 const server = http.createServer(app);
 
+// Define allowed origins for CORS
+const allowedOrigins = ["http://localhost:5173", "http://localhost:5174"];
+
 const io = new Server(server, {
     cors: {
-        origin: ["http://localhost:5173", "http://localhost:5174"], 
+        origin: allowedOrigins,
         methods: ["GET", "POST"],
         credentials: true,
     }
 });
 
-const userSocketMap = {}; // {userId: socketId}
+// Map to store user socket connections
+const userSocketMap = new Map(); // More efficient than plain objects
 
-export const getReceiverSocketId = (receiverId) => {
-    return userSocketMap[receiverId];
-}
+/**
+ * Get the socket ID of a receiver user.
+ * @param {string} receiverId - The user ID of the receiver.
+ * @returns {string | undefined} - The socket ID or undefined if not found.
+ */
+export const getReceiverSocketId = (receiverId) => userSocketMap.get(receiverId);
 
-io.on('connection', (socket) => {
-    console.log("A user connected:", socket.id);
-    
-    const userId = socket.handshake.query.userId;
-    if (userId && userId !== "undefined") {
-        userSocketMap[userId] = socket.id;
-    }
-    
-    // Emit the list of online users to all clients
-    io.emit("getOnlineUsers", Object.keys(userSocketMap));
+io.on("connection", (socket) => {
+    console.log(`🔵 User connected: ${socket.id}`);
 
-    socket.on("disconnect", () => {
-        console.log("User disconnected:", socket.id);
-        const userId = Object.keys(userSocketMap).find(id => userSocketMap[id] === socket.id);
-        if (userId) {
-            delete userSocketMap[userId];
-            io.emit("getOnlineUsers", Object.keys(userSocketMap));
+    try {
+        const userId = socket.handshake.query.userId;
+        
+        if (userId && userId !== "undefined") {
+            userSocketMap.set(userId, socket.id);
+            console.log(`✅ User ${userId} mapped to socket ${socket.id}`);
         }
-    });
+
+        // Emit updated list of online users
+        io.emit("getOnlineUsers", Array.from(userSocketMap.keys()));
+
+        socket.on("disconnect", () => handleDisconnection(socket));
+    } catch (error) {
+        console.error("❌ Error in connection:", error);
+    }
 });
+
+/**
+ * Handle user disconnection.
+ * @param {object} socket - The disconnected user's socket.
+ */
+const handleDisconnection = (socket) => {
+    console.log(`🔴 User disconnected: ${socket.id}`);
+
+    try {
+        const userId = [...userSocketMap.entries()].find(([_, id]) => id === socket.id)?.[0];
+
+        if (userId) {
+            userSocketMap.delete(userId);
+            console.log(`❌ User ${userId} removed from userSocketMap`);
+        }
+
+        // Emit updated list of online users
+        io.emit("getOnlineUsers", Array.from(userSocketMap.keys()));
+    } catch (error) {
+        console.error("❌ Error handling disconnection:", error);
+    }
+};
 
 export { app, io, server };
